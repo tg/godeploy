@@ -117,7 +117,7 @@ Dir.mktmpdir("deploy-build-") {|dir|
   puts "==> Deploying".magenta if !hosts.empty?
   hosts.each do |host|
     puts host.split('@',2)
-    call("scp #{dir}/#{tarfile} #{host}:#{remote_tmp_dir}/")
-    call("ssh #{host} 'tar -xf #{remote_tmp_dir}/#{tarfile} -C #{remote_bin_dir} && rm #{remote_tmp_dir}/#{tarfile}'")
+    rtar = "#{remote_tmp_dir}/#{tarfile}" # remote path to tar file
+    call("ssh #{host} 'cat - > #{rtar} && tar -xf #{rtar} -C #{remote_bin_dir} && rm #{rtar}' < #{dir}/#{tarfile}")
   end
 }
