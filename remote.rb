@@ -10,6 +10,7 @@ class Remote
     @tmpdir = '.'
   end
 
+  # Connect to remote host, create directories, return platform info.
   def ping
     os, arch =
       Shell.call("ssh #{@host} 'mkdir -p #{tmpdir} #{dir} && uname -sm'").
@@ -18,6 +19,7 @@ class Remote
       split(' ', 2).map(&:to_sym)
   end
 
+  # Deploy tarball by copying it over via ssh and extracting.
   def deploy(tarfile)
     # Set up path to remote tarfile
     rtar = "#{tmpdir}/#{File.basename tarfile}"

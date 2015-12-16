@@ -7,8 +7,8 @@ require_relative 'remote'
 require_relative 'shell'
 require_relative 'platform'
 
-remote_bin_dir = '.'
-remote_tmp_dir = '.'
+remote_bin_dir = nil
+remote_tmp_dir = nil
 hosts = []
 flags = {}
 
@@ -34,18 +34,14 @@ OptionParser.new do |opts|
   opts.on('', '--go-get', 'Use `go get` instead of `go install` for dependencies') do |f|
     flags[:goget] = f
   end
-
-  # opts.on("-v", "--verbose", "Show commands") do |v|
-  #   flags[:verbose] = v
-  # end
 end.parse!
 
 builder = Builder.new(ARGV)
 
 remotes = hosts.map { |h|
   r = Remote.new(h)
-  r.dir = remote_bin_dir
-  r.tmpdir = remote_tmp_dir
+  r.dir = remote_bin_dir if remote_bin_dir
+  r.tmpdir = remote_tmp_dir if remote_tmp_dir
   r
 }
 
