@@ -2,6 +2,10 @@
 require 'tmpdir'
 require 'colorize'
 require 'optparse'
+require_relative 'builder'
+require_relative 'remote'
+require_relative 'shell'
+require_relative 'platform'
 
 remote_bin_dir = '.'
 remote_tmp_dir = '.'
@@ -9,7 +13,7 @@ hosts = []
 flags = {}
 
 OptionParser.new do |opts|
-  opts.banner = 'Usage: deploy [options] packages'
+  opts.banner = 'Usage: godeploy [options] packages'
 
   opts.on('-rHOST', '--remote=HOST', 'Remote (SSH) host for deployment') do |host|
     hosts << host
@@ -31,30 +35,19 @@ OptionParser.new do |opts|
     flags[:goget] = f
   end
 
-  opts.on("-v", "--verbose", "Show commands") do |v|
-    flags[:verbose] = v
-  end
+  # opts.on("-v", "--verbose", "Show commands") do |v|
+  #   flags[:verbose] = v
+  # end
 end.parse!
 
-shell = lambda do |cmd|
-  puts "# #{cmd}" if flags[:verbose]
+builder = Builder.new(ARGV)
 
-  out = `#{cmd}`
-  exit 1 if $?.exitstatus != 0
-
-  out
-end
-
-# Parse ARGV[1] as go package input (e.g. ./cmd/...)
-# Get import paths to all main packages
-targets = shell.call("go list -f '{{.Name}} {{.ImportPath}}' #{ARGV.join(' ')}").scan(/^main (.*)/).flatten
-
-# Get all dependencies
-deps = shell.call(%(go list -f '{{join .Deps "\\n"}}' #{targets.join(' ')})).strip.split
-# Remove standard library
-shell.call("go list std").strip.split.each do |pkg|
-  deps.delete(pkg)
-end
+remotes = hosts.map { |h|
+  r = Remote.new(h)
+  r.dir = remote_bin_dir
+  r.tmpdir = remote_tmp_dir
+  r
+}
 
 if hosts.empty?
   puts "==> Will deploy nowhere".yellow
@@ -63,71 +56,42 @@ else
 end
 
 # Create directories on remote host and check os/architecture
-hosts.each do |host|
-  print "#{host.split('@',2)[-1]}... "
+remotes.each do |remote|
+  print "#{remote.hostname}... "
   $stdout.flush
 
-  os, arch =
-    shell.call("ssh #{host} 'mkdir -p #{remote_tmp_dir} #{remote_bin_dir} && uname -sm'").
-    strip.
-    split(' ', 2)
-
+  os, arch = remote.ping
   puts "(#{os} #{arch})"
 
-  goos =
-    case os.downcase
-    when 'darwin', 'dragonfly', 'freebsd', 'linux', 'netbsd',
-         'openbsd', 'plan9', 'solaris', 'windows'
-      os.downcase
-    else
-      puts "Unknown OS: #{os}"
-      exit 1
-    end
+  goos, goarch = Platform.guess_from_uname(os, arch)
+  if !goos
+    puts "Unknown OS: #{os}"
+    exit 1
+  elsif !goarch
+    puts "Unknown architecture: #{arch}"
+    exit 1
+  end
 
-  goarch =
-    case arch
-    when 'i386', 'i686'
-      '386'
-    when 'x86_64'
-      'amd64'
-    else
-      puts "Unknown architecture: #{arch}"
-      exit 1
-    end
-
-  if (ENV['GOOS'] && ENV['GOOS'] != goos) ||
-     (ENV['GOARCH'] && ENV['GOARCH'] != goarch)
+  if (builder.os && builder.os != goos) || (builder.arch && builder.arch != goarch)
     puts "Platform conflict"
     exit 1
   end
 
-  ENV['GOOS'] = goos
-  ENV['GOARCH'] = goarch
+  builder.set_platform(goos, goarch)
 end
 
 # Fetch and install dependencies.
 # This compiles dependencies to $GOPATH/pkg/$GOOS_$GOARCH
 puts "==> Installing dependencies".green
-shell.call("go #{flags[:goget] ? "get" : "install"} -v #{deps.join(' ')}")
+builder.install_deps(flags[:goget])
 
 # Build executables in temp dir, then tar it all
 puts "==> Building binaries".green
-Dir.mktmpdir("godeploy-") { |dir|
-  tarname = "#{File.basename dir}.tar.gz"
-
-  # Build targets
-  targets.each do |path|
-    shell.call("go build -v -o #{dir}/#{File.basename path} #{path}")
-  end
-
-  # Tar+gzip
-  shell.call("cd #{dir} && tar -czf #{tarname} #{targets.map { |p| File.basename p }.join(' ')}")
-
-  # Copy to remotes (tmp dir), untar to destination
-  puts "==> Deploying".magenta unless hosts.empty?
-  rtar = "#{remote_tmp_dir}/#{tarname}" # remote path to tar file
-  hosts.each do |host|
-    puts host.split('@',2)
-    shell.call("ssh #{host} 'cat - > #{rtar} && tar -xf #{rtar} -C #{remote_bin_dir} && rm #{rtar}' < #{dir}/#{tarname}")
+builder.build { |tarfile|
+  next if hosts.empty?
+  puts "==> Deploying".magenta
+  remotes.each do |remote|
+    puts remote.hostname
+    remote.deploy(tarfile)
   end
 }
