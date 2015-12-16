@@ -100,8 +100,6 @@ call("go #{@flags[:goget] ? "get" : "install"} -v #{deps.join(' ')}")
 
 # Build executables in temp dir, then tar it all
 puts "==> Building binaries".green
-
-tarfile = nil # path to tar file
 Dir.mktmpdir("deploy-build-") {|dir|
   tarfile = "#{File.basename dir}.tar.gz"
 
