@@ -6,7 +6,7 @@ require 'optparse'
 remote_bin_dir = '.'
 remote_tmp_dir = '.'
 hosts = []
-@flags = {}
+flags = {}
 
 OptionParser.new do |opts|
   opts.banner = 'Usage: deploy [options] packages'
@@ -28,29 +28,31 @@ OptionParser.new do |opts|
   end
 
   opts.on('', '--go-get', 'Use `go get` instead of `go install` for dependencies') do |f|
-    @flags[:goget] = f
+    flags[:goget] = f
   end
 
   opts.on("-v", "--verbose", "Show commands") do |v|
-    @flags[:verbose] = v
+    flags[:verbose] = v
   end
 end.parse!
 
-def call(cmd)
-  puts "# #{cmd}" if @flags[:verbose]
-  r = `#{cmd}`
+shell = lambda do |cmd|
+  puts "# #{cmd}" if flags[:verbose]
+
+  out = `#{cmd}`
   exit 1 if $?.exitstatus != 0
-  return r
+
+  out
 end
 
 # Parse ARGV[1] as go package input (e.g. ./cmd/...)
 # Get import paths to all main packages
-targets = call("go list -f '{{.Name}} {{.ImportPath}}' #{ARGV.join(' ')}").scan(/^main (.*)/).flatten
+targets = shell.call("go list -f '{{.Name}} {{.ImportPath}}' #{ARGV.join(' ')}").scan(/^main (.*)/).flatten
 
 # Get all dependencies
-deps = call("go list -f '{{join .Deps \"\\n\"}}' #{targets.join(' ')}").strip.split
+deps = shell.call(%(go list -f '{{join .Deps "\\n"}}' #{targets.join(' ')})).strip.split
 # Remove standard library
-call("go list std").strip.split.each do |pkg|
+shell.call("go list std").strip.split.each do |pkg|
   deps.delete(pkg)
 end
 
@@ -63,59 +65,69 @@ end
 # Create directories on remote host and check os/architecture
 hosts.each do |host|
   print "#{host.split('@',2)[-1]}... "
-  STDOUT.flush
-  os, arch = call("ssh #{host} 'mkdir -p #{remote_tmp_dir} #{remote_bin_dir} && uname -sm'").strip.split(' ', 2)
+  $stdout.flush
+
+  os, arch =
+    shell.call("ssh #{host} 'mkdir -p #{remote_tmp_dir} #{remote_bin_dir} && uname -sm'").
+    strip.
+    split(' ', 2)
+
   puts "(#{os} #{arch})"
 
-  goos = case os.downcase
-  when 'darwin', 'dragonfly', 'freebsd', 'linux', 'netbsd', 'openbsd', 'plan9', 'solaris', 'windows'
-    os.downcase
-  else
-    puts "Unknown OS: #{os}"
-    exit 1
-  end
+  goos =
+    case os.downcase
+    when 'darwin', 'dragonfly', 'freebsd', 'linux', 'netbsd',
+         'openbsd', 'plan9', 'solaris', 'windows'
+      os.downcase
+    else
+      puts "Unknown OS: #{os}"
+      exit 1
+    end
 
-  goarch = case arch
-  when 'i386', 'i686'
-    '386'
-  when 'x86_64'
-    'amd64'
-  else
-    puts "Unknown architecture: #{arch}"
-    exit 1
-  end
+  goarch =
+    case arch
+    when 'i386', 'i686'
+      '386'
+    when 'x86_64'
+      'amd64'
+    else
+      puts "Unknown architecture: #{arch}"
+      exit 1
+    end
 
-  if ENV['GOOS'] && ENV['GOOS'] != goos or ENV['GOARCH'] && ENV['GOARCH'] != goarch
+  if (ENV['GOOS'] && ENV['GOOS'] != goos) ||
+     (ENV['GOARCH'] && ENV['GOARCH'] != goarch)
     puts "Platform conflict"
     exit 1
   end
 
-  ENV['GOOS'], ENV['GOARCH'] = goos, goarch
+  ENV['GOOS'] = goos
+  ENV['GOARCH'] = goarch
 end
 
 # Fetch and install dependencies.
 # This compiles dependencies to $GOPATH/pkg/$GOOS_$GOARCH
 puts "==> Installing dependencies".green
-call("go #{@flags[:goget] ? "get" : "install"} -v #{deps.join(' ')}")
+shell.call("go #{flags[:goget] ? "get" : "install"} -v #{deps.join(' ')}")
 
 # Build executables in temp dir, then tar it all
 puts "==> Building binaries".green
-Dir.mktmpdir("godeploy-") {|dir|
+Dir.mktmpdir("godeploy-") { |dir|
   tarname = "#{File.basename dir}.tar.gz"
 
   # Build targets
   targets.each do |path|
-    call("go build -v -o #{dir}/#{File.basename path} #{path}")
+    shell.call("go build -v -o #{dir}/#{File.basename path} #{path}")
   end
 
   # Tar+gzip
-  call("cd #{dir} && tar -czf #{tarname} #{targets.map{|p| File.basename p}.join(' ')}")
+  shell.call("cd #{dir} && tar -czf #{tarname} #{targets.map { |p| File.basename p }.join(' ')}")
 
   # Copy to remotes (tmp dir), untar to destination
-  puts "==> Deploying".magenta if !hosts.empty?
+  puts "==> Deploying".magenta unless hosts.empty?
   rtar = "#{remote_tmp_dir}/#{tarname}" # remote path to tar file
   hosts.each do |host|
     puts host.split('@',2)
-    call("ssh #{host} 'cat - > #{rtar} && tar -xf #{rtar} -C #{remote_bin_dir} && rm #{rtar}' < #{dir}/#{tarname}")
+    shell.call("ssh #{host} 'cat - > #{rtar} && tar -xf #{rtar} -C #{remote_bin_dir} && rm #{rtar}' < #{dir}/#{tarname}")
   end
 }
