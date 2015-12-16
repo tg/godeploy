@@ -101,7 +101,7 @@ call("go #{@flags[:goget] ? "get" : "install"} -v #{deps.join(' ')}")
 # Build executables in temp dir, then tar it all
 puts "==> Building binaries".green
 Dir.mktmpdir("godeploy-") {|dir|
-  tarfile = "#{File.basename dir}.tar.gz"
+  tarname = "#{File.basename dir}.tar.gz"
 
   # Build targets
   targets.each do |path|
@@ -109,13 +109,13 @@ Dir.mktmpdir("godeploy-") {|dir|
   end
 
   # Tar+gzip
-  call("cd #{dir} && tar -czf #{tarfile} #{targets.map{|p| File.basename p}.join(' ')}")
+  call("cd #{dir} && tar -czf #{tarname} #{targets.map{|p| File.basename p}.join(' ')}")
 
   # Copy to remotes (tmp dir), untar to destination
   puts "==> Deploying".magenta if !hosts.empty?
+  rtar = "#{remote_tmp_dir}/#{tarname}" # remote path to tar file
   hosts.each do |host|
     puts host.split('@',2)
-    rtar = "#{remote_tmp_dir}/#{tarfile}" # remote path to tar file
-    call("ssh #{host} 'cat - > #{rtar} && tar -xf #{rtar} -C #{remote_bin_dir} && rm #{rtar}' < #{dir}/#{tarfile}")
+    call("ssh #{host} 'cat - > #{rtar} && tar -xf #{rtar} -C #{remote_bin_dir} && rm #{rtar}' < #{dir}/#{tarname}")
   end
 }
