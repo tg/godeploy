@@ -4,7 +4,7 @@ require 'colorize'
 require 'optparse'
 
 remote_bin_dir = '.'
-remote_tmp_dir = '/tmp'
+remote_tmp_dir = '.'
 hosts = []
 @flags = {}
 
@@ -19,7 +19,7 @@ OptionParser.new do |opts|
     remote_bin_dir = dir
   end
 
-  opts.on('', '--remote-tmp-dir=DIR', 'Remote temporary directory (default: /tmp)') do |dir|
+  opts.on('', '--remote-tmp-dir=DIR', 'Remote temporary directory') do |dir|
     remote_tmp_dir = dir
   end
 
